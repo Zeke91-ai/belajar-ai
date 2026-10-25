@@ -59,7 +59,7 @@ Aturan penulisan:
 Buka **Command Prompt** atau **PowerShell**, lalu jalankan perintah berikut satu per satu:
 
 ```
-cd C:\Users\SCC1202201146\Documents\Ngoding\telegramcrawl
+cd C:\Lokasi_project
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
