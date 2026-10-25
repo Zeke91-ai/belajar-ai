@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telegram Mirror</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1d2330; --muted:#6b7280; --line:#e3e6eb;
+          --accent:#2563eb; --bad:#dc2626; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:12px; padding:12px 18px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0 12px 0 0; }
+  .pill { padding:4px 10px; border-radius:999px; font-size:13px; background:#e5e7eb; }
+  .pill.running { background:#dcfce7; color:#166534; }
+  .pill.starting { background:#fef3c7; color:#92400e; }
+  .pill.stale, .pill.stopped { background:#fee2e2; color:#991b1b; }
+  .spacer { flex:1; }
+  button { font:inherit; padding:7px 14px; border-radius:7px; border:1px solid var(--line); background:var(--card); cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.danger { background:var(--bad); color:#fff; border-color:var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  nav { display:flex; gap:4px; padding:0 18px; background:var(--card); border-bottom:1px solid var(--line); overflow-x:auto; }
+  nav button { border:none; border-bottom:2px solid transparent; border-radius:0; padding:12px 14px; background:none; }
+  nav button.active { border-bottom-color:var(--accent); color:var(--accent); font-weight:600; }
+  main { padding:18px; max-width:1200px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  .filters { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:8px; align-items:end; }
+  label { font-size:12px; color:var(--muted); display:flex; flex-direction:column; gap:4px; }
+  input, select { font:inherit; padding:7px 9px; border:1px solid var(--line); border-radius:7px; background:#fff; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  .muted { color:var(--muted); font-size:12px; }
+  .badge { display:inline-block; font-size:11px; padding:2px 7px; border-radius:6px; margin-left:4px; background:#e5e7eb; }
+  .badge.deleted { background:#fee2e2; color:#991b1b; }
+  .badge.edited { background:#fef3c7; color:#92400e; }
+  .badge.media { background:#e0e7ff; color:#3730a3; }
+  .text { white-space:pre-wrap; word-break:break-word; max-width:620px; }
+  .feed-item { border-bottom:1px solid var(--line); padding:8px 0; font-size:14px; }
+  .feed-item .type { font-weight:600; color:var(--accent); }
+  .thumb { display:block; max-width:280px; max-height:220px; border-radius:8px; margin-top:6px; border:1px solid var(--line); }
+  .media-box { margin-top:6px; }
+  audio { display:block; margin-top:6px; }
+  #login { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center; z-index:20; }
+  #login form { background:var(--card); padding:22px; border-radius:12px; width:330px; display:flex; flex-direction:column; gap:10px; }
+  .err { color:var(--bad); font-size:13px; min-height:16px; }
+  .hidden { display:none !important; }
+  a { color:var(--accent); }
+  .link-btn { border:none; background:none; color:var(--accent); padding:0; cursor:pointer; font:inherit; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <form id="loginForm">
+    <h2 style="margin:0 0 4px">Masuk</h2>
+    <div class="muted">Telegram Mirror (akses lokal)</div>
+    <label>Username <input id="lu" autocomplete="username" required></label>
+    <label>Password <input id="lp" type="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit">Masuk</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</div>
+
+<header class="hidden" id="topbar">
+  <h1>Telegram Mirror</h1>
+  <span id="statusPill" class="pill stopped">stopped</span>
+  <span class="muted" id="statusDetail"></span>
+  <span class="spacer"></span>
+  <button id="startBtn" class="primary">Start mirror</button>
+  <button id="stopBtn" class="danger">Stop mirror</button>
+  <button id="logoutBtn">Logout</button>
+</header>
+
+<nav class="hidden" id="tabs">
+  <button data-tab="live" class="active">Live</button>
+  <button data-tab="messages">Pesan</button>
+  <button data-tab="chats">Grup &amp; Channel</button>
+  <button data-tab="people">Orang</button>
+  <button data-tab="webhooks">Webhook</button>
+  <button data-tab="export">Ekspor</button>
+</nav>
+
+<main class="hidden" id="app">
+
+  <section id="tab-live">
+    <div class="card">
+      <div class="muted">Aktivitas terbaru, diperbarui otomatis. Pesan baru, edit, hapus, dan perubahan grup muncul di sini.</div>
+    </div>
+    <div class="card" id="feed"></div>
+  </section>
+
+  <section id="tab-messages" class="hidden">
+    <div class="card filters">
+      <label>Grup / chat <input id="fChat" placeholder="judul, @username, atau chat_id"></label>
+      <label>Pengirim <input id="fSender" placeholder="nama, @username, atau user_id"></label>
+      <label>Kata kunci <input id="fQ" placeholder="isi pesan"></label>
+      <label>Dari tanggal <input id="fFrom" type="date"></label>
+      <label>Sampai tanggal <input id="fTo" type="date"></label>
+      <label>Status
+        <select id="fStatus">
+          <option value="">Semua</option>
+          <option value="live">Belum dihapus</option>
+          <option value="deleted">Dihapus</option>
+          <option value="edited">Pernah diedit</option>
+        </select>
+      </label>
+      <div><button class="primary" id="searchBtn">Cari</button> <button id="moreBtn">Muat lagi</button></div>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Waktu (UTC)</th><th>Grup / chat</th><th>Pengirim</th><th>Pesan</th><th>Media</th></tr></thead>
+        <tbody id="msgRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-chats" class="hidden">
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Judul</th><th>Username</th><th>Jenis</th><th>Anggota</th><th>Pengirim tercatat</th><th>Pesan</th><th>Chat ID</th></tr></thead>
+        <tbody id="chatRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-people" class="hidden">
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Nama</th><th>Username</th><th>Pesan</th><th>Grup</th><th>User ID</th></tr></thead>
+        <tbody id="peopleRows"></tbody>
+      </table>
+    </div>
+    <div class="card hidden" id="personCard">
+      <h3 style="margin-top:0" id="personTitle"></h3>
+      <table>
+        <thead><tr><th>Grup / chat</th><th>Username</th><th>Pesan pertama</th><th>Pesan terakhir</th></tr></thead>
+        <tbody id="personChats"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-webhooks" class="hidden">
+    <div class="card">
+      <h3 style="margin-top:0">Tambah subscriber webhook</h3>
+      <form id="whForm" class="filters">
+        <label>Nama <input id="whName" placeholder="sclab-dev" required></label>
+        <label>URL penerima <input id="whUrl" placeholder="http://127.0.0.1:9000/webhook" required></label>
+        <label>Mulai dari
+          <select id="whStart">
+            <option value="beginning">Semua riwayat</option>
+            <option value="now">Hanya event baru</option>
+          </select>
+        </label>
+        <div><button class="primary" type="submit">Tambah</button></div>
+      </form>
+      <div class="err" id="whErr"></div>
+      <div id="whSecret" class="card hidden" style="background:#fffbeb"></div>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Nama</th><th>URL</th><th>Status</th><th>Posisi (seq)</th><th>Tertunda</th><th>Dead letter</th><th>Aksi</th></tr></thead>
+        <tbody id="whRows"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">API key untuk pull (Opsi B)</h4>
+      <p class="muted">Dipakai klien yang menarik event secara berkala lewat <code>/api/v1/events</code>. Key hanya ditampilkan sekali.</p>
+      <form id="keyForm" class="filters">
+        <label>Nama key <input id="keyName" placeholder="sclab-pull" required></label>
+        <div><button class="primary" type="submit">Buat key</button></div>
+      </form>
+      <table style="margin-top:8px">
+        <thead><tr><th>Nama</th><th>Prefix</th><th>Dibuat</th><th>Terakhir dipakai</th><th>Status</th><th></th></tr></thead>
+        <tbody id="keyRows"></tbody>
+      </table>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <h4 style="margin-top:0">Dead letter</h4>
+      <table>
+        <thead><tr><th>Waktu gagal</th><th>Subscriber</th><th>seq</th><th>Jenis</th><th>Percobaan</th><th>Alasan</th><th></th></tr></thead>
+        <tbody id="deadRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-export" class="hidden">
+    <div class="card">
+      <h3 style="margin-top:0">Ekspor CSV</h3>
+      <p class="muted">Pesan mengikuti filter di tab Pesan. File berformat UTF-8 dengan BOM, jadi Excel membacanya dengan benar.</p>
+      <button id="expMsg">Unduh pesan (CSV)</button>
+      <button id="expEvt">Unduh aktivitas (CSV)</button>
+    </div>
+  </section>
+</main>
+
+<script>
+let TOKEN = sessionStorage.getItem("tm_token");
+let stream = null;
+let msgOffset = 0;
+let statusTimer = null;
+
+const $ = (id) => document.getElementById(id);
+
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") n.className = v;
+    else if (k === "onclick") n.onclick = v;
+    else n.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) {
+    if (k === null || k === undefined || k === false) continue;
+    n.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  }
+  return n;
+}
+
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+  const res = await fetch(path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  if (res.status === 401) { showLogin(); throw new Error("login required"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function showLogin() {
+  TOKEN = null; sessionStorage.removeItem("tm_token");
+  if (stream) { stream.close(); stream = null; }
+  if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+  $("login").classList.remove("hidden");
+  $("topbar").classList.add("hidden"); $("tabs").classList.add("hidden"); $("app").classList.add("hidden");
+}
+
+function showApp() {
+  $("login").classList.add("hidden");
+  $("topbar").classList.remove("hidden"); $("tabs").classList.remove("hidden"); $("app").classList.remove("hidden");
+  refreshStatus();
+  if (!statusTimer) statusTimer = setInterval(refreshStatus, 3000);
+  startStream();
+  loadMessages(true);
+  loadChats();
+  loadPeople();
+}
+
+$("loginForm").onsubmit = async (e) => {
+  e.preventDefault();
+  $("loginErr").textContent = "";
+  try {
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("lu").value, password: $("lp").value }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "login failed");
+    TOKEN = data.token; sessionStorage.setItem("tm_token", TOKEN);
+    $("lp").value = "";
+    showApp();
+  } catch (err) { $("loginErr").textContent = err.message; }
+};
+
+$("logoutBtn").onclick = async () => {
+  try { await api("/api/logout", { method: "POST" }); } catch (_) {}
+  showLogin();
+};
+
+async function refreshStatus() {
+  try {
+    const s = await api("/api/status");
+    const pill = $("statusPill");
+    pill.textContent = s.state; pill.className = "pill " + s.state;
+    $("statusDetail").textContent = s.heartbeat_utc ? "heartbeat " + s.heartbeat_utc : "";
+    $("startBtn").disabled = s.running || s.state === "starting";
+    $("stopBtn").disabled = !s.running;
+  } catch (_) {}
+}
+
+$("startBtn").onclick = async () => {
+  $("startBtn").disabled = true;
+  try { await api("/api/mirror/start", { method: "POST" }); } catch (e) { alert(e.message); }
+  refreshStatus();
+};
+$("stopBtn").onclick = async () => {
+  $("stopBtn").disabled = true;
+  try { await api("/api/mirror/stop", { method: "POST" }); } catch (e) { alert(e.message); }
+  refreshStatus();
+};
+
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("active", x === b));
+  for (const t of ["live", "messages", "chats", "people", "webhooks", "export"])
+    $("tab-" + t).classList.toggle("hidden", t !== b.dataset.tab);
+  if (b.dataset.tab === "webhooks") loadWebhooks().catch((e) => alert(e.message));
+});
+
+// ---- webhooks ----------------------------------------------------------------
+
+function btn(label, fn) { return el("button", { style: "margin:2px", onclick: fn }, label); }
+
+function showSecret(title, secret) {
+  const box = $("whSecret");
+  box.classList.remove("hidden");
+  box.replaceChildren(
+    el("strong", {}, title),
+    el("div", { class: "muted" }, "Salin sekarang. Secret ini tidak ditampilkan lagi."),
+    el("code", { style: "display:block;word-break:break-all;margin:8px 0" }, secret),
+    btn("Tutup", () => box.classList.add("hidden")));
+}
+
+async function whCall(id, action, body) {
+  try {
+    return await api(`/api/webhooks/${id}/${action}`, { method: "POST", body: JSON.stringify(body || {}) });
+  } catch (e) { alert(e.message); return null; }
+}
+
+async function loadWebhooks() {
+  const subs = await api("/api/webhooks");
+  const names = Object.fromEntries(subs.map((s) => [s.id, s.name]));
+  $("whRows").replaceChildren(...subs.map((s) => el("tr", {},
+    el("td", {}, s.name),
+    el("td", { class: "muted" }, s.url),
+    el("td", {}, s.enabled ? "aktif" : "nonaktif",
+      s.last_error ? el("div", { class: "muted" }, "terakhir: " + s.last_error) : null),
+    el("td", {}, s.cursor_seq),
+    el("td", {}, s.pending_events),
+    el("td", {}, s.dead_letters),
+    el("td", {},
+      btn(s.enabled ? "Nonaktifkan" : "Aktifkan", async () => { await whCall(s.id, s.enabled ? "disable" : "enable"); loadWebhooks(); }),
+      btn("Rotasi secret", async () => {
+        const r = await whCall(s.id, "rotate-secret");
+        if (r) showSecret("Secret baru untuk " + s.name, r.secret);
+      }),
+      btn("Ulang dari seq…", async () => {
+        const v = prompt("Kirim ulang mulai dari seq (0 = semua):", String(s.cursor_seq));
+        if (v === null) return;
+        await whCall(s.id, "rewind", { seq: Number(v) });
+        loadWebhooks();
+      }),
+      btn("Hapus", async () => {
+        if (!confirm("Hapus subscriber " + s.name + "?")) return;
+        await whCall(s.id, "delete");
+        loadWebhooks();
+      }))
+  )));
+
+  await loadKeys();
+  const dead = await api("/api/webhooks/dead");
+  $("deadRows").replaceChildren(...dead.map((d) => el("tr", {},
+    el("td", {}, d.failed_utc),
+    el("td", {}, names[d.subscription_id] || String(d.subscription_id)),
+    el("td", {}, d.seq),
+    el("td", {}, d.event_type),
+    el("td", {}, d.attempts),
+    el("td", { class: "muted" }, d.last_error || ""),
+    el("td", {}, d.replayed_utc ? "sudah dikirim ulang" : btn("Kirim ulang", async () => {
+      try {
+        await api(`/api/webhooks/dead/${d.id}/replay`, { method: "POST" });
+      } catch (e) { alert(e.message); }
+      loadWebhooks();
+    })))));
+}
+
+$("whForm").onsubmit = async (e) => {
+  e.preventDefault();
+  $("whErr").textContent = "";
+  try {
+    const r = await api("/api/webhooks", { method: "POST", body: JSON.stringify({
+      name: $("whName").value, url: $("whUrl").value, start: $("whStart").value }) });
+    showSecret("Subscriber dibuat: " + r.name, r.secret);
+    $("whForm").reset();
+    loadWebhooks();
+  } catch (err) { $("whErr").textContent = err.message; }
+};
+
+// ---- API keys (pull option) -----------------------------------------------------
+
+async function loadKeys() {
+  const keys = await api("/api/keys");
+  $("keyRows").replaceChildren(...keys.map((k) => el("tr", {},
+    el("td", {}, k.name),
+    el("td", { class: "muted" }, k.key_prefix + "…"),
+    el("td", {}, k.created_utc),
+    el("td", {}, k.last_used_utc || "belum pernah"),
+    el("td", {}, k.revoked_utc ? "dicabut" : "aktif"),
+    el("td", {}, k.revoked_utc ? "" : btn("Cabut", async () => {
+      if (!confirm("Cabut key " + k.name + "? Klien yang memakainya langsung gagal.")) return;
+      try { await api(`/api/keys/${k.id}/revoke`, { method: "POST" }); } catch (e) { alert(e.message); }
+      loadKeys();
+    })))));
+}
+
+$("keyForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const r = await api("/api/keys", { method: "POST", body: JSON.stringify({ name: $("keyName").value }) });
+    showSecret("API key dibuat: " + r.name, r.key);
+    $("keyForm").reset();
+    loadKeys();
+  } catch (err) { alert(err.message); }
+};
+
+function fmtSize(n) {
+  if (!n) return "";
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+// Renders one media attachment from its metadata. Shows status while a download is pending.
+function mediaBlock(media) {
+  if (!media) return null;
+  const label = (media.file_name || media.type || "file") + (media.size ? " · " + fmtSize(media.size) : "");
+  if (!media.url) {
+    const why = media.status === "skipped_large_video" ? "video terlalu besar, hanya metadata"
+              : media.status === "failed" ? "gagal diunduh"
+              : media.status === "none" ? "tidak bisa ditampilkan"
+              : "mengunduh…";
+    return el("div", { class: "media-box" },
+      el("span", { class: "badge media" }, media.type + " · " + why), " ",
+      el("span", { class: "muted" }, label));
+  }
+  const src = media.url + "?token=" + encodeURIComponent(TOKEN);
+  if (["photo", "gif", "sticker"].includes(media.type))
+    return el("img", { class: "thumb", src: src, alt: label, loading: "lazy" });
+  if (media.type === "video")
+    return el("video", { class: "thumb", src: src, controls: "" });
+  if (["voice", "audio"].includes(media.type))
+    return el("audio", { src: src, controls: "" });
+  return el("div", { class: "media-box" }, el("a", { href: src, target: "_blank" }, "⬇ " + label));
+}
+
+function renderFeedItem(ev) {
+  const p = ev.payload || {};
+  let detail = "";
+  if (ev.event_type.endsWith("message")) detail = p.text_preview || "";
+  if (ev.event_type === "message_edited") detail = "lama: " + (p.old_text || "-") + "  →  baru: " + (p.new_text || "");
+  if (ev.event_type === "service_action") detail = p.action || "";
+  if (ev.event_type === "media_update") detail = "media siap";
+  if (ev.event_type.startsWith("profile")) detail = JSON.stringify(p);
+  const chat = ev.chat_title ? ev.chat_title + (ev.chat_username ? " (@" + ev.chat_username + ")" : "") : "";
+  const dir = p.direction === "out" ? "keluar" : p.direction === "in" ? "masuk" : null;
+  return el("div", { class: "feed-item", "data-key": ev.message_id ? ev.chat_id + ":" + ev.message_id : "" },
+    el("span", { class: "type" }, ev.event_type), " ",
+    dir ? el("span", { class: "badge" }, dir) : null, " ",
+    el("span", { class: "muted" }, ev.occurred_utc), " ",
+    chat ? el("span", {}, "· " + chat) : null,
+    detail ? el("div", { class: "text" }, detail) : null,
+    el("div", { class: "media-slot" }, mediaBlock(p.media)));
+}
+
+function startStream() {
+  if (stream) stream.close();
+  stream = new EventSource("/api/stream?token=" + encodeURIComponent(TOKEN));
+  stream.onmessage = (msg) => {
+    const ev = JSON.parse(msg.data);
+    const feed = $("feed");
+    // A finished download fills in the media slot of the item it belongs to.
+    if (ev.event_type === "media_update") {
+      const key = ev.chat_id + ":" + ev.message_id;
+      const item = [...feed.querySelectorAll(".feed-item")].find((n) => n.dataset.key === key);
+      if (item) {
+        item.querySelector(".media-slot").replaceChildren(mediaBlock(ev.payload.media) || "");
+        return;
+      }
+    }
+    feed.prepend(renderFeedItem(ev));
+    while (feed.children.length > 300) feed.lastChild.remove();
+  };
+}
+
+function currentFilters() {
+  return new URLSearchParams({
+    chat: $("fChat").value, sender: $("fSender").value, q: $("fQ").value,
+    from: $("fFrom").value, to: $("fTo").value, status: $("fStatus").value,
+  });
+}
+
+async function loadMessages(reset) {
+  if (reset) { msgOffset = 0; $("msgRows").replaceChildren(); }
+  const params = currentFilters();
+  params.set("limit", "100"); params.set("offset", String(msgOffset));
+  const rows = await api("/api/messages?" + params);
+  for (const m of rows) $("msgRows").append(messageRow(m));
+  if (!rows.length && reset) $("msgRows").append(el("tr", {}, el("td", { colspan: "5" }, "Tidak ada hasil.")));
+  msgOffset += rows.length;
+  $("moreBtn").disabled = rows.length < 100;
+}
+
+function messageRow(m) {
+  const chatName = m.chat_title || String(m.chat_id);
+  const badges = [];
+  if (m.deleted_utc) badges.push(el("span", { class: "badge deleted" }, "dihapus"));
+  if (m.edited_utc) badges.push(el("span", { class: "badge edited" }, "diedit"));
+  const media = m.has_media
+    ? (m.local_path && m.download_status === "downloaded"
+        ? el("a", { href: "/media/" + m.chat_id + "/" + m.message_id + "?token=" + encodeURIComponent(TOKEN), target: "_blank" }, m.media_type || "file")
+        : el("span", { class: "badge media" }, (m.media_type || "media") + " · " + (m.download_status || "")))
+    : "";
+  return el("tr", {},
+    el("td", {}, m.date_utc),
+    el("td", {}, chatName, m.chat_username ? el("div", { class: "muted" }, "@" + m.chat_username) : null),
+    el("td", {}, m.sender_name || "-", m.sender_username ? el("div", { class: "muted" }, "@" + m.sender_username) : null),
+    el("td", {}, el("div", { class: "text" }, m.text || (m.has_media ? "[media]" : "")), badges),
+    el("td", {}, media));
+}
+
+$("searchBtn").onclick = () => loadMessages(true).catch((e) => alert(e.message));
+$("moreBtn").onclick = () => loadMessages(false).catch((e) => alert(e.message));
+
+async function loadChats() {
+  const rows = await api("/api/chats");
+  $("chatRows").replaceChildren(...rows.map((c) => el("tr", {},
+    el("td", {}, c.title),
+    el("td", {}, c.username ? "@" + c.username : "-"),
+    el("td", {}, c.entity_type),
+    el("td", {}, c.participants_count ?? "-"),
+    el("td", {}, c.poster_count),
+    el("td", {}, c.message_count),
+    el("td", { class: "muted" }, c.chat_id))));
+}
+
+async function loadPeople() {
+  const rows = await api("/api/people");
+  $("peopleRows").replaceChildren(...rows.map((u) => {
+    const name = [u.first_name, u.last_name].filter(Boolean).join(" ") || "-";
+    return el("tr", {},
+      el("td", {}, name, u.is_self ? el("span", { class: "badge" }, "akun Anda") : null, u.is_bot ? el("span", { class: "badge" }, "bot") : null),
+      el("td", {}, u.username ? "@" + u.username : "-"),
+      el("td", {}, u.message_count),
+      el("td", {}, el("button", { class: "link-btn", onclick: () => showPerson(u, name) }, u.chat_count + " grup")),
+      el("td", { class: "muted" }, u.user_id));
+  }));
+}
+
+async function showPerson(u, name) {
+  $("personCard").classList.remove("hidden");
+  $("personTitle").textContent = name + (u.username ? " (@" + u.username + ")" : "");
+  const rows = await api("/api/user-chats?user_id=" + u.user_id);
+  $("personChats").replaceChildren(...rows.map((r) => el("tr", {},
+    el("td", {}, r.chat_title || String(r.chat_id)),
+    el("td", {}, r.chat_username ? "@" + r.chat_username : "-"),
+    el("td", {}, r.first_message_utc),
+    el("td", {}, r.last_message_utc))));
+}
+
+function downloadCsv(kind) {
+  const params = kind === "messages" ? currentFilters() : new URLSearchParams();
+  params.set("type", kind);
+  params.set("token", TOKEN);
+  window.location = "/api/export?" + params.toString();
+}
+$("expMsg").onclick = () => downloadCsv("messages");
+$("expEvt").onclick = () => downloadCsv("events");
+
+(async () => {
+  if (!TOKEN) return showLogin();
+  try { await api("/api/status"); showApp(); } catch (_) { showLogin(); }
+})();
+</script>
+</body>
+</html>
